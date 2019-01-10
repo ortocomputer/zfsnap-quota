@@ -10,11 +10,9 @@ ZFS=/sbin/zfs
 LOGTAG=$(basename $0)
 
 TESTRUN=0
+VERBOSE=0
 VOLUME="$(${ZFS} list -Ho name | head -1)"
 CAPLIMIT=90
-
-CURRENT_CAPACITY=$(df -P  | grep ${VOLUME} | awk '{ print $5}' | sed 's/%//g')
-REMOVED_SNAPSHOTS=0
 
 function print_version(){
 	echo ${0##*/} v${VERSION} by Toni Magni
@@ -28,33 +26,49 @@ Syntax:
 ${0##*/} [options]
 
 OPTIONS:
-	--capacity X	= In percentage, disk capacity threshold (default ${CAPLIMIT}%)
-	--volume VOL	= The name of the ZFS dataset volume (default ${VOLUME})
-	--version	= Print version and exit
-	--help		= Print help and exit
+	--capacity X	= X is a percentage of disk capacity threshold (default ${CAPLIMIT}%).
+	--volume VOL	= VOL is the name of the ZFS dataset volume (default ${VOLUME}).
+	--dry-run	= Don't actually do anything. Just print what would be destroyed.
+	--verbose 	= Verbose output.
+	--version	= Print version and exit.
+	--help		= Print help and exit.
 EOF
 }
 
-case "$1" in
-        '--capacity')
-                CAPLIMIT="$2"
-                shift 2
-                ;;
-        '--volume')
-                VOLUME="$2"
-                shift 2
-                ;;
-        '--help')
-		print_help
-                exit 0
-                ;;
-        '--version')
-		print_version
-                exit 0
-                ;;
-
-esac
-
+for arg in "$@"; do
+	case "$arg" in
+		'--capacity')
+			CAPLIMIT="$2"
+			shift 2
+			;;
+		'--volume')
+			VOLUME="$2"
+			shift 2
+			;;
+		'--verbose')
+			VERBOSE=1
+			shift 1
+			;;
+		'--dry-run')
+			TESTRUN=1
+			shift 1
+			;;
+		'--help')
+			print_help
+			exit 0
+			;;
+		'--version')
+			print_version
+			exit 0
+			;;
+	
+	esac
+done
+CURRENT_CAPACITY=$(df -P  | grep ${VOLUME} | head -1 | awk '{ print $5}' | sed 's/%//g')
+if [ ${VERBOSE} -ne 0 ]; then
+	echo "Curent usage of ${VOLUME} is: ${CURRENT_CAPACITY}%. Threshold: ${CAPLIMIT}%"
+fi
+REMOVED_SNAPSHOTS=0
 
 while [ ${CURRENT_CAPACITY} -ge ${CAPLIMIT} ]; do
     if [ $(${ZFS} list -t snapshot -o name | grep ${VOLUME} | wc -l) -lt 1 ]; then
@@ -66,7 +80,7 @@ while [ ${CURRENT_CAPACITY} -ge ${CAPLIMIT} ]; do
     OLDEST_SNAPSHOT=$(${ZFS} list -t snapshot -o name -s creation | grep ${VOLUME} | head -1)
     logger -t${LOGTAG}  "Disk capacity at ${CURRENT_CAPACITY}%. Limit is ${CAPLIMIT}%. Destroying [${OLDEST_SNAPSHOT}]"
     DESTROY="${ZFS} destroy -v ${OLDEST_SNAPSHOT}"
-    if [ ${TESTRUN} -eq 1 ]; then
+    if [ ${TESTRUN} -ne 0 ]; then
         echo ${DESTROY}
     else
         eval ${DESTROY}
