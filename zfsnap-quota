@@ -1,0 +1,43 @@
+#!/bin/bash
+
+#
+# Check for disk capacity and remove snapshots if capacity is above threshold.
+#
+
+ZFS=/usr/local/bin/zfs
+
+LOGTAG=$(basename $0)
+
+TESTRUN=0
+VOLUME='RAIDZ1/VirtualMachines'
+CAPLIMIT=90
+
+CURRENT_CAPACITY=$(df -P  | grep ${VOLUME} | awk '{ print $5}' | sed 's/%//g')
+REMOVED_SNAPSHOTS=0
+
+while [ ${CURRENT_CAPACITY} -ge ${CAPLIMIT} ]; do
+    if [ $(${ZFS} list -t snapshot -o name | grep ${VOLUME} | wc -l) -lt 1 ]; then
+        LOGMESSAGE="Disk space is low, but no snapshots found. Can't free up any space."
+        logger -t${LOGTAG} ${LOGMESSAGE}
+        echo ${LOGMESSAGE} > /dev/stderr
+        exit
+    fi
+    OLDEST_SNAPSHOT=$(${ZFS} list -t snapshot -o name -s creation | grep ${VOLUME} | head -1)
+    logger -t${LOGTAG}  "Disk capacity at ${CURRENT_CAPACITY}%. Limit is ${CAPLIMIT}%. Destroying [${OLDEST_SNAPSHOT}]"
+    DESTROY="${ZFS} destroy -v ${OLDEST_SNAPSHOT}"
+    if [ ${TESTRUN} -eq 1 ]; then
+        echo ${DESTROY}
+    else
+        eval ${DESTROY}
+    fi
+    ((REMOVED_SNAPSHOTS++))
+    sleep 10 # Allow time for FS to write and df to report correctly.
+    CURRENT_CAPACITY=$(df -P  | grep ${VOLUME} | awk '{ print $5}' | sed 's/%//g')
+    logger -t${LOGTAG}  "Disk capacity now at ${CURRENT_CAPACITY}%."
+done
+
+if [ ${REMOVED_SNAPSHOTS} -ne 0 ]; then
+    logger -t${LOGTAG}  "${REMOVED_SNAPSHOTS} snapshots removed."
+else
+    logger -t${LOGTAG}  "Current capacity is only at ${CURRENT_CAPACITY}%. Nothing to be done."
+fi
