@@ -3,7 +3,7 @@
 #
 # Check for disk capacity and remove snapshots if capacity is above threshold.
 #
-VERSION="0.1.0"
+VERSION="0.1.1"
 
 ZFS=/sbin/zfs
 
@@ -26,8 +26,8 @@ Syntax:
 ${0##*/} [options]
 
 OPTIONS:
-	--capacity X	= X is a percentage of disk capacity threshold (default ${CAPLIMIT}%).
-	--volume VOL	= VOL is the name of the ZFS dataset volume (default ${VOLUME}).
+	--threshold X	= X is a percentage of disk capacity threshold (default ${CAPLIMIT}%).
+	--pool VOL	= VOL is the name of the ZFS pool (default ${VOLUME}).
 	--dry-run	= Don't actually do anything. Just print what would be destroyed.
 	--verbose 	= Verbose output.
 	--version	= Print version and exit.
@@ -37,34 +37,42 @@ EOF
 
 for arg in "$@"; do
 	case "$arg" in
-		'--capacity')
-			CAPLIMIT="$2"
-			shift 2
+		--threshold=*)
+			CAPLIMIT="${arg#*=}"
 			;;
-		'--volume')
-			VOLUME="$2"
-			shift 2
+		--pool=*)
+			VOLUME="${arg#*=}"
+			if ! zpool list "${VOLUME}" > /dev/null; then
+				exit 1
+			fi
 			;;
-		'--verbose')
+		--verbose)
 			VERBOSE=1
-			shift 1
 			;;
-		'--dry-run')
+		--dry-run)
 			TESTRUN=1
-			shift 1
 			;;
-		'--help')
+		--help)
 			print_help
 			exit 0
 			;;
-		'--version')
+		--version)
 			print_version
 			exit 0
+			;;
+		*)
+			echo "ERROR: Argument $1 not recognized"
+			print_help
+			exit 1
 			;;
 	
 	esac
 done
-CURRENT_CAPACITY=$(df -P  | grep ${VOLUME} | head -1 | awk '{ print $5}' | sed 's/%//g')
+#CURRENT_CAPACITY=$(df -P  | grep ${VOLUME} | head -1 | awk '{ print $5}' | sed 's/%//g')
+function current_capacity() {
+	echo $(zpool list -Ho name,cap | grep ${VOLUME} | awk '{ print $2}' | sed 's/%//g')
+}
+CURRENT_CAPACITY=$(current_capacity)
 if [ ${VERBOSE} -ne 0 ]; then
 	echo "Curent usage of ${VOLUME} is: ${CURRENT_CAPACITY}%. Threshold: ${CAPLIMIT}%"
 fi
@@ -87,7 +95,7 @@ while [ ${CURRENT_CAPACITY} -ge ${CAPLIMIT} ]; do
     fi
     ((REMOVED_SNAPSHOTS++))
     sleep 10 # Allow time for FS to write and df to report correctly.
-    CURRENT_CAPACITY=$(df -P  | grep ${VOLUME} | awk '{ print $5}' | sed 's/%//g')
+    CURRENT_CAPACITY=$(current_capacity)
     logger -t${LOGTAG}  "Disk capacity now at ${CURRENT_CAPACITY}%."
 done
 
