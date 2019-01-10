@@ -3,17 +3,58 @@
 #
 # Check for disk capacity and remove snapshots if capacity is above threshold.
 #
+VERSION="0.1.0"
 
-ZFS=/usr/local/bin/zfs
+ZFS=/sbin/zfs
 
 LOGTAG=$(basename $0)
 
 TESTRUN=0
-VOLUME='RAIDZ1/VirtualMachines'
+VOLUME="$(${ZFS} list -Ho name | head -1)"
 CAPLIMIT=90
 
 CURRENT_CAPACITY=$(df -P  | grep ${VOLUME} | awk '{ print $5}' | sed 's/%//g')
 REMOVED_SNAPSHOTS=0
+
+function print_version(){
+	echo ${0##*/} v${VERSION} by Toni Magni
+}
+
+function print_help(){
+            cat << EOF
+${0##*/} v${VERSION} by Toni Magni
+
+Syntax:
+${0##*/} [options]
+
+OPTIONS:
+	--capacity X	= In percentage, disk capacity threshold (default ${CAPLIMIT}%)
+	--volume VOL	= The name of the ZFS dataset volume (default ${VOLUME})
+	--version	= Print version and exit
+	--help		= Print help and exit
+EOF
+}
+
+case "$1" in
+        '--capacity')
+                CAPLIMIT="$2"
+                shift 2
+                ;;
+        '--volume')
+                VOLUME="$2"
+                shift 2
+                ;;
+        '--help')
+		print_help
+                exit 0
+                ;;
+        '--version')
+		print_version
+                exit 0
+                ;;
+
+esac
+
 
 while [ ${CURRENT_CAPACITY} -ge ${CAPLIMIT} ]; do
     if [ $(${ZFS} list -t snapshot -o name | grep ${VOLUME} | wc -l) -lt 1 ]; then
