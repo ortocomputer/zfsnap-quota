@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# Assumes snapshots with the following:
+# zfs snapshot rpool/nas-main-bk@snapshot_$(date "+%Y-%m-%d_%H_%M_%S")
+
+# Set the ZFS dataset, the number of days to retain daily snapshots, and the number of monthly snapshots to retain
+ZFS_DATASET="rpool/nas-main-bk"
+RETENTION_DAYS=15
+RETENTION_MONTHLY=12
+
+# Get the list of all snapshots for the specified dataset
+SNAPSHOT_LIST=$(zfs list -t snapshot -H -o name -r "$ZFS_DATASET")
+
+# Calculate the timestamp for the retention period
+RETENTION_TIMESTAMP=$(date -d "$RETENTION_DAYS days ago" +%s)
+
+# Loop through each snapshot and decide whether to delete it
+while read -r snapshot; do
+    # Extract the timestamp and time from the snapshot name
+    SNAPSHOT_TIMESTAMP=$(echo "$snapshot" | awk '{gsub("snapshot", ""); print}' | awk -F'@' '{print $2}' | awk -F'_' '{print $1" "$2}')
+    # Convert the snapshot timestamp to seconds since epoch
+    SNAPSHOT_TIMESTAMP_SECONDS=$(date -d "$SNAPSHOT_TIMESTAMP" +%s 2>/dev/null)
+
+    # Check if the snapshot is older than the retention period
+    if [ -n "$SNAPSHOT_TIMESTAMP_SECONDS" ] && [ "$SNAPSHOT_TIMESTAMP_SECONDS" -lt "$RETENTION_TIMESTAMP" ]; then
+        # Check if the snapshot is not the last one of the month
+        if [ "$(date -d "$SNAPSHOT_TIMESTAMP" +%d)" -ne "$(date -d "$SNAPSHOT_TIMESTAMP" +%d -d "next month")" ]; then
+            # Delete the snapshot
+            zfs destroy "$snapshot"
+            echo "Deleted snapshot: $snapshot"
+        fi
+    fi
+done <<< "$SNAPSHOT_LIST"
+
+# Retain the specified number of monthly snapshots
+MONTHLY_SNAPSHOTS=$(zfs list -t snapshot -H -o name -r "$ZFS_DATASET" | grep -E "$(date -d "$RETENTION_MONTHLY months ago" +%Y-%m)-[0-9]{2}_[0-9]{2}_[0-9]{2}")
+MONTHLY_COUNT=$(echo "$MONTHLY_SNAPSHOTS" | wc -l)
+
+if [ "$MONTHLY_COUNT" -gt "$RETENTION_MONTHLY" ]; then
+    # Sort monthly snapshots by date and time and delete the excess ones
+    echo "$MONTHLY_SNAPSHOTS" | sort -k2,2 -k3,3 | head -n -$RETENTION_MONTHLY | while read -r monthly_snapshot; do
+        zfs destroy "$monthly_snapshot"
+        echo "Deleted monthly snapshot: $monthly_snapshot"
+    done
+fi
